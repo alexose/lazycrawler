@@ -1,26 +1,6 @@
 from spider import *
-import couchdb
-import datetime
-import time
 
-from couchdb.client import Server, Document
-from couchdb.mapping import TextField, IntegerField, DateTimeField, ListField
 
-def initDatabase():
-    server = Server('http://localhost:5984')
-    try:
-        db = server.create('lazycrawler')
-    except Exception:
-        db = server['lazycrawler']
-
-    return db
-
-class Page(Document):
-    root = TextField()
-    links = ListField(TextField());
-    score = IntegerField();
-    date  = DateTimeField(default=datetime.datetime.now())
-    
 def getLinks(url):
     page = Fetcher(url)
     page.fetch()
@@ -80,9 +60,7 @@ def parse_options():
 
 def main():
     opts, args = parse_options()
-
-    db = initDatabase();
-
+    
     url = args[0]
 
     if opts.links:
@@ -111,14 +89,6 @@ def main():
 
     eTime = time.time()
     tTime = eTime - sTime
-
-    page = Page()
-    page['root'] = crawler.root 
-    page['links'] = {}
-    page['score'] = 1 
-    page['date']  = eTime
-
-    db.save(page)
 
     print >> sys.stderr, "Found:    %d" % crawler.num_links
     print >> sys.stderr, "Followed: %d" % crawler.num_followed

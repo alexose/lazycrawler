@@ -18,9 +18,14 @@ import urllib2
 import urlparse
 import optparse
 import hashlib
+import couchdb
+import datetime
+import time
 from cgi import escape
 from traceback import format_exc
 from Queue import Queue, Empty as QueueEmpty
+from couchdb.client import Server, Document
+from couchdb.mapping import TextField, IntegerField, DateTimeField, ListField
 
 from bs4 import BeautifulSoup
 
@@ -34,6 +39,16 @@ USAGE = "%prog [options] <url>"
 VERSION = "%prog v" + __version__
 
 AGENT = "%s/%s" % (__name__, __version__)
+    
+''' The couchdb object that will be saved '''
+class Page(Document):
+    _id = IntegerField()
+    url = TextField()
+    links = ListField(TextField())
+    score = IntegerField()
+    date  = DateTimeField(default=datetime.datetime.now())
+    parent = IntegerField()
+    children = ListField(IntegerField())
 
 class Link (object):
 
@@ -59,6 +74,8 @@ class Crawler(object):
         self.root = root
         self.host = urlparse.urlparse(root)[1]
 
+        self.db = initDatabase();
+        
         ## Data for filters:
         self.depth_limit = depth_limit # Max depth (number of hops from root)
         self.locked = locked           # Limit search to a single host?
@@ -129,7 +146,6 @@ class Crawler(object):
             print >> sys.stderr, "ERROR: Can't process url '%s' (%s)" % (url, e)
             return False
             
-
     def crawl(self):
 
         """ Main function in the crawling process.  Core algorithm is:
@@ -149,6 +165,8 @@ class Crawler(object):
         
         q = Queue()
         q.put((self.root, 0))
+        
+        ''' Initialize the database and create a document. '''
 
         while not q.empty():
             this_url, depth = q.get()
@@ -169,11 +187,22 @@ class Crawler(object):
                 try:
                     self.visited_links.add(this_url)
                     self.num_followed += 1
+                    
+                    ''' Create CouchDB document for url '''
+                    doc = Page()
+                    doc.url = this_url
+                    doc.score = 0 
+                    doc.date  = DateTimeField(default=datetime.datetime.now())
+                    doc.parent = 0 
+                    doc.children = []
+                    doc.links = []
+
                     page = Fetcher(this_url)
                     page.fetch()
                     for link_url in [self._pre_visit_url_condense(l) for l in page.out_links()]:
                         if link_url not in self.urls_seen:
                             q.put((link_url, depth+1))
+                            doc.links.append(link_url)
                             self.urls_seen.add(link_url)
                             
                         do_not_remember = [f for f in self.out_url_filters if not f(link_url)]
@@ -183,9 +212,14 @@ class Crawler(object):
                                 link = Link(this_url, link_url, "href")
                                 if link not in self.links_remembered:
                                     self.links_remembered.add(link)
+                    self.db.save(doc)
+                    print 'saved!'
+
                 except Exception, e:
                     print >>sys.stderr, "ERROR: Can't process url '%s' (%s)" % (this_url, e)
                     #print format_exc()
+            
+            
 
 class OpaqueDataException (Exception):
     def __init__(self, message, mimetype, url):
@@ -349,3 +383,11 @@ class DotWriter:
             print "\t" + self._safe_alias(l.src) + " -> " + self._safe_alias(l.dst) + ";"
         print  "}"
 
+def initDatabase():
+    server = Server('http://localhost:5984')
+    del server['lazycrawler']    
+    try:
+        db = server.create('lazycrawler')
+    except Exception:
+        db = server['lazycrawler']
+    return db
